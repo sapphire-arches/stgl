@@ -32,7 +32,7 @@
 #include "st.h"
 #include "rendering.h"
 
-#define FONT_SIZE 12
+#define FONT_SIZE 30
 
 /* XEMBED messages */
 #define XEMBED_FOCUS_IN  4
@@ -580,11 +580,12 @@ void
 xresize(int col, int row)
 {
   dc.specbuf = realloc(dc.specbuf, col * sizeof(*dc.specbuf));
-	win.tw = MAX(1, col * win.cw);
-	win.th = MAX(1, row * win.ch);
+  int pw = col * win.cw;
+  int ph = row * win.ch;
+	win.tw = MAX(1, pw);
+	win.th = MAX(1, ph);
 
-  glViewport(0, 0, win.tw, win.th);
-  render_resize(dc.rc, win.tw, win.th);
+  render_resize(dc.rc, pw, ph);
 }
 
 ushort
@@ -666,15 +667,9 @@ xsetcolorname(int x, const char *name)
 void
 xclear(int x1, int y1, int x2, int y2)
 {
-  /*
-  glBegin(GL_QUADS);
-  set_gl_color(dc.col + (IS_SET(MODE_REVERSE)? defaultfg : defaultbg));
-  glVertex2f(x1, y1);
-  glVertex2f(x1, y1);
-  glVertex2f(x1, y1);
-  glVertex2f(x1, y1);
-  glEnd();
-  */
+  struct color tmp;
+  convert_color(&(dc.col + (IS_SET(MODE_REVERSE)? defaultfg : defaultbg))->color, &tmp);
+  render_rect(dc.rc, &tmp, x1, y1, x2 - x1, y2 - y1);
 }
 
 void
@@ -1442,9 +1437,6 @@ drawregion(int x1, int y1, int x2, int y2)
 	if (!(win.state & WIN_VISIBLE))
 		return;
 
-
-  render_do_render(dc.rc);
-
 	for (y = y1; y < y2; y++) {
 		// if (!term.dirty[y])
 		// 	continue;
@@ -1477,6 +1469,8 @@ drawregion(int x1, int y1, int x2, int y2)
 			xdrawglyphfontspecs(specs, base, i, ox, y);
 	}
 	xdrawcursor();
+
+  render_do_render(dc.rc);
 }
 
 void
@@ -1625,7 +1619,10 @@ resize(XEvent *e)
 	if (e->xconfigure.width == win.w && e->xconfigure.height == win.h)
 		return;
 
-	cresize(e->xconfigure.width, e->xconfigure.height);
+  int w = e->xconfigure.width;
+  int h = e->xconfigure.height;
+
+	cresize(w, h);
 	ttyresize();
 }
 
