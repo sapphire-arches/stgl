@@ -40,6 +40,7 @@ extern "C" {
   void render_destroy(struct render_context * rc);
   void render_do_render(struct render_context * rc);
   void render_resize(struct render_context * rc, int w, int h);
+  void render_set_y_nudge(struct render_context * rc, int nudge);
 
   /** Create an atlas. Takes ownership of the font */
   struct atlas * atlas_create_from_face(FT_Face f);

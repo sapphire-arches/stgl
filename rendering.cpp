@@ -778,6 +778,7 @@ struct render_context {
   RectJob _rect_job;
 
   void set_size(int w, int h);
+  void set_y_nudge(int y);
   void do_render();
   void render_rune(const glyph_spec * spec);
 
@@ -827,7 +828,12 @@ void render_context::render_rune(const glyph_spec * spec) {
 void render_context::set_size(int w, int h) {
   _win_w = w;
   _win_h = h;
+  glViewport(0, 0, w, h);
   _fb.reset(new GlFrameBuffer(w, h, false, GL_DEPTH_COMPONENT24));
+}
+
+void render_context::set_y_nudge(int y) {
+  printf("Y nudged %d\n", y);
 }
 
 render_context::render_context()
@@ -855,6 +861,10 @@ void render_destroy(struct render_context * rc) {
 
 void render_resize(struct render_context * rc, int w, int h) {
   rc->set_size(w, h);
+}
+
+void render_set_y_nudge(struct render_context * rc, int y) {
+  rc->set_y_nudge(y);
 }
 
 void render_do_render(struct render_context * rc) {
