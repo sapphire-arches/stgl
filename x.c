@@ -15,6 +15,7 @@
 #include <X11/Xft/Xft.h>
 #include <X11/XKBlib.h>
 #include <X11/extensions/Xrender.h>
+#include <math.h>
 
 #include <glad/glad.h>
 #include <glad/glad_glx.h>
@@ -31,7 +32,7 @@
 #include "st.h"
 #include "rendering.h"
 
-#define FONT_SIZE (12 * 2)
+#define FONT_SIZE 12
 
 /* XEMBED messages */
 #define XEMBED_FOCUS_IN  4
@@ -1859,9 +1860,17 @@ static void gl_draw_glyphs(Color * col, struct glyph_spec * specs, int len) {
   }
 }
 
+static float srgb_to_lin(float v) {
+  if (v < 0.04045) {
+    return v / 12.92;
+  } else {
+    return pow((v + 0.055) / 1.055, 2.4f);
+  }
+}
+
 static void convert_color(XRenderColor * in,  struct color * out) {
-  out->r = in->red / 65535.f;
-  out->g = in->green / 65535.f;
-  out->b = in->blue / 65535.f;
+  out->r = srgb_to_lin(in->red / 65535.f);
+  out->g = srgb_to_lin(in->green / 65535.f);
+  out->b = srgb_to_lin(in->blue / 65535.f);
   out->a = in->alpha / 65535.f;
 }
