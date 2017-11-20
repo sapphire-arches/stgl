@@ -12,6 +12,7 @@
 #include "rendering.h"
 
 #include <cstddef>
+#include <cassert>
 #include <glad/glad.h>
 #include <memory>
 #include <string>
@@ -52,8 +53,32 @@ static const char * frag_shader =
   "in vec2 cross_uv;\n"
   "layout(location=1, binding=0) uniform sampler2D font_tex;\n"
   "void main() {\n"
-  "  color = cross_color * texture(font_tex, cross_uv).r;\n"
-  //   "  color = cross_color; \n"
+  // "  color = vec4(1.f, 1.f, 1.f, texture(font_tex, cross_uv).r);\n"
+  // "  color = vec4(cross_color.rgb, texture(font_tex, cross_uv).r);\n"
+  // "  color = cross_color * texture(font_tex, cross_uv).r;\n"
+  "  color = cross_color;\n"
+  "  color.a *= texture(font_tex, cross_uv).r;\n"
+  "}\n";
+
+static const char * framebuffer_frag_shader =
+  "#version 450\n"
+  "out vec4 color;\n"
+  "in vec4 cross_color;\n"
+  "in vec2 cross_uv;\n"
+  "layout(location=1, binding=0) uniform sampler2D font_tex;\n"
+  "void main() {\n"
+  "  color = cross_color * texture(font_tex, cross_uv);\n"
+  "}\n";
+
+static const char * color_shader =
+  "#version 450\n"
+  "out vec4 color;\n"
+  "in vec4 cross_color;\n"
+  "in vec2 cross_uv;\n"
+  "layout(location=1, binding=0) uniform sampler2D font_tex;\n"
+  "void main() {\n"
+  "  color = cross_color;\n"
+  "  color.a = 1.f;\n"
   "}\n";
 
 struct __attribute__((packed)) vec2 {
@@ -106,6 +131,77 @@ public:
     return _id;
   }
 };
+
+class GlFrameBuffer {
+private:
+  GLuint _id;
+  GLsizei _width, _height;
+  GLuint _color_id;
+  GLuint _depth_id;
+public:
+  GlFrameBuffer(GLsizei width, GLsizei height, bool linear, GLenum depth_format);
+  GlFrameBuffer(const GlFrameBuffer & other) = delete;
+  GlFrameBuffer(GlFrameBuffer && other);
+  GlFrameBuffer & operator=(GlFrameBuffer & other) = delete;
+  GlFrameBuffer & operator=(GlFrameBuffer && other);
+  ~GlFrameBuffer();
+
+  void blit_entirely(GLuint dst) const;
+  void blit_entirely(const GlFrameBuffer & dst) const;
+  void bind(GLenum target) const;
+
+  GLuint get_main_color() const { return _color_id; }
+};
+
+GlFrameBuffer::GlFrameBuffer(GLsizei width, GLsizei height, bool linear, GLenum depth_format)
+  : _width(width),
+    _height(height)
+{
+  GLuint texs[2];
+  glCreateFramebuffers(1, &_id);
+  glCreateTextures(GL_TEXTURE_2D, 2, texs);
+  _color_id = texs[0];
+  _depth_id = texs[1];
+
+  printf("Creating frame buffer of size %d %d \n", width, height);
+
+
+  GLenum fmt = (linear) ? GL_RGB8 : GL_SRGB;
+  glTextureStorage2D(_color_id, 1, fmt, width, height);
+  glTextureParameteri(_color_id, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTextureParameteri(_color_id, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+  glTextureStorage2D(_depth_id, 1, depth_format, width, height);
+
+  glNamedFramebufferTexture(_id, GL_COLOR_ATTACHMENT0, _color_id, 0);
+  glNamedFramebufferTexture(_id, GL_DEPTH_ATTACHMENT, _depth_id, 0);
+
+  if (!linear) {
+    int p;
+    glGetNamedFramebufferAttachmentParameteriv(_id, GL_COLOR_ATTACHMENT0,
+                                               GL_FRAMEBUFFER_ATTACHMENT_COLOR_ENCODING,
+                                               &p);
+    assert(p == GL_SRGB);
+  }
+}
+
+GlFrameBuffer::~GlFrameBuffer() {
+  glDeleteFramebuffers(1, &_id);
+  GLuint textures[2] = {_color_id, _depth_id};
+  glDeleteTextures(2, textures);
+}
+
+void GlFrameBuffer::bind(GLenum target) const {
+  glBindFramebuffer(target, _id);
+}
+
+void GlFrameBuffer::blit_entirely(GLuint dst) const {
+  glBlitNamedFramebuffer(_id, dst,
+                         0, 0, _width, _height,
+                         0, 0, _width, _height,
+                         GL_COLOR_BUFFER_BIT,
+                         GL_LINEAR);
+}
 
 template<typename T>
 class GlBuffer {
@@ -250,6 +346,10 @@ GlShader::~GlShader() {
   glDeleteProgram(_prog_id);
 }
 
+GlShader::GlShader(GlShader && other) {
+  _prog_id = other._prog_id;
+}
+
 void GlShader::bind() {
   glUseProgram(_prog_id);
 }
@@ -383,51 +483,50 @@ struct atlas {
 
     uvs.insert({glyph, out});
   }
+
+  void bind_texture(int binding) {
+    (void) binding;
+    glBindTexture(GL_TEXTURE_2D, tex.GetID());
+  }
 };
 
-template<typename VertexType>
-class RenderJob {
+class FontBatch {
 private:
-  std::shared_ptr<GlTexture> texture;
-  std::shared_ptr<GlBuffer<VertexType>> verts;
-};
-
-struct render_context {
-  GlShader _shader;
-  std::vector<RenderJob<vertex>> _jobs;
   std::shared_ptr<GlBuffer<vertex>> _verts;
   std::shared_ptr<GlVAO<vertex>> _vert_vao;
-  int _win_w;
-  int _win_h;
+public:
+  FontBatch();
+  FontBatch(const FontBatch & other) = delete;
+  FontBatch(FontBatch && other);
+  FontBatch & operator=(const FontBatch & other) = delete;
+  FontBatch & operator=(FontBatch && other);
+  ~FontBatch();
 
-  void set_size(int w, int h);
-  void do_render();
-  void render_rune(const glyph_spec * spec);
-
-  render_context();
+  void enqueue_glyph(const glyph_spec * const spec);
+  void render();
 };
 
-void render_context::do_render() {
-  _verts->sync();
-  _shader.bind();
+FontBatch::FontBatch() :
+  _verts(new GlBuffer<vertex>()),
+  _vert_vao(new GlVAO<vertex>(_verts)) {
+  _vert_vao->bind_buffer(_verts, 0, 0, sizeof(vertex));
 
-  // Transform matrix in row major order
-  float transform[16] = {
-    2.f / _win_w, 0.f, 0.f, -1.f,
-    0.f, -2.f / _win_h, 0.f, 1.f,
-    0.f, 0.f, 1.f, 0.f,
-    0.f, 0.f, 0.f, 1.f,
-  };
+  _vert_vao->enable_attrib(POSITION_LOCATION);
+  _vert_vao->enable_attrib(UV_LOCATION);
+  _vert_vao->enable_attrib(COLOR_LOCATION);
 
-  _shader.uniform(TRANSFORM_LOCATION, GL_TRUE, transform);
+  _vert_vao->bind_attrib(POSITION_LOCATION, 0);
+  _vert_vao->bind_attrib(UV_LOCATION, 0);
+  _vert_vao->bind_attrib(COLOR_LOCATION, 0);
 
-  _vert_vao->bind();
-  glDrawArrays(GL_TRIANGLES, 0, _verts->num_elems());
-
-  _verts->clear();
+  _vert_vao->attrib_format(POSITION_LOCATION, 3, GL_FLOAT, GL_FALSE, offsetof(vertex, pos));
+  _vert_vao->attrib_format(UV_LOCATION, 2, GL_FLOAT, GL_FALSE, offsetof(vertex, texcoords));
+  _vert_vao->attrib_format(COLOR_LOCATION, 4, GL_FLOAT, GL_FALSE, offsetof(vertex, c));
 }
 
-void render_context::render_rune(const glyph_spec * spec) {
+FontBatch::~FontBatch() {}
+
+void FontBatch::enqueue_glyph(const glyph_spec * const spec) {
   struct glyph_render_params rps;
   spec->font->glyph_render_params(spec->glyph, rps);
 
@@ -489,17 +588,33 @@ void render_context::render_rune(const glyph_spec * spec) {
   _verts->push_elements(lverts, 3);
 }
 
-void render_context::set_size(int w, int h) {
-  _win_w = w;
-  _win_h = h;
+void FontBatch::render() {
+  _verts->sync();
+  _vert_vao->bind();
+  glDrawArrays(GL_TRIANGLES, 0, _verts->num_elems());
+  _verts->clear();
 }
 
-render_context::render_context() :
-  _shader(std::string(vert_shader), std::string(frag_shader)),
-  _verts(new GlBuffer<vertex>()),
-  _vert_vao(new GlVAO<vertex>(_verts)),
-  _win_w(1),
-  _win_h(1)
+class FBBlitJob {
+private:
+  std::shared_ptr<GlShader> _shader;
+  std::shared_ptr<GlBuffer<vertex>> _verts;
+  std::shared_ptr<GlVAO<vertex>> _vert_vao;
+public:
+  FBBlitJob(std::shared_ptr<GlShader> shader);
+  FBBlitJob(const FBBlitJob & other) = delete;
+  FBBlitJob(const FBBlitJob && other);
+  FBBlitJob& operator=(const FBBlitJob & other) = delete;
+  FBBlitJob& operator=(const FBBlitJob && other) = delete;
+  ~FBBlitJob();
+
+  void do_blit(GLuint backing_texture);
+};
+
+FBBlitJob::FBBlitJob(std::shared_ptr<GlShader> shader)
+  : _shader(shader),
+    _verts(new GlBuffer<vertex>()),
+    _vert_vao(new GlVAO<vertex>(_verts))
 {
   _vert_vao->bind_buffer(_verts, 0, 0, sizeof(vertex));
 
@@ -514,6 +629,207 @@ render_context::render_context() :
   _vert_vao->attrib_format(POSITION_LOCATION, 3, GL_FLOAT, GL_FALSE, offsetof(vertex, pos));
   _vert_vao->attrib_format(UV_LOCATION, 2, GL_FLOAT, GL_FALSE, offsetof(vertex, texcoords));
   _vert_vao->attrib_format(COLOR_LOCATION, 4, GL_FLOAT, GL_FALSE, offsetof(vertex, c));
+
+  vertex lverts[4] = {
+    {
+      .pos = {.x = -1.f, .y = -1.f, .z = 0.f },
+      .texcoords = {.x = 0.f, .y = 0.f },
+      .c = { .r = 1.f, .g = 1.f, .b = 1.f }
+    },
+    {
+      .pos = {.x =  1.f, .y =  1.f, .z = 0.f },
+      .texcoords = {.x = 1.f, .y = 1.f },
+      .c = { .r = 1.f, .g = 1.f, .b = 1.f }
+    },
+    {
+      .pos = {.x = -1.f, .y =  1.f, .z = 0.f },
+      .texcoords = {.x = 0.f, .y = 1.f },
+      .c = { .r = 1.f, .g = 1.f, .b = 1.f }
+    },
+    {
+      .pos = {.x =  1.f, .y = -1.f, .z = 0.f },
+      .texcoords = {.x = 1.f, .y = 0.f },
+      .c = { .r = 1.f, .g = 1.f, .b = 1.f }
+    },
+  };
+
+  _verts->push_elements(lverts, 3);
+  lverts[2] = lverts[3];
+  _verts->push_elements(lverts, 3);
+
+  _verts->sync();
+}
+
+FBBlitJob::~FBBlitJob() {
+}
+
+void FBBlitJob::do_blit(GLuint backing_texture) {
+  glBindTextureUnit(TEXTURE_BINDING, backing_texture);
+  _shader->bind();
+  float transform[16] = {
+    1.f, 0.f, 0.f, 0.f,
+    0.f, 1.f, 0.f, 0.f,
+    0.f, 0.f, 1.f, 0.f,
+    0.f, 0.f, 0.f, 1.f,
+  };
+  _shader->uniform(TRANSFORM_LOCATION, GL_TRUE, transform);
+
+  _vert_vao->bind();
+  glDrawArrays(GL_TRIANGLES, 0, _verts->num_elems());
+}
+
+class RectJob {
+private:
+  std::shared_ptr<GlShader> _shader;
+  std::shared_ptr<GlBuffer<vertex>> _verts;
+  std::shared_ptr<GlVAO<vertex>> _vert_vao;
+public:
+  RectJob(std::shared_ptr<GlShader> shader);
+  RectJob(const RectJob & other) = delete;
+  RectJob(const RectJob && other);
+  RectJob& operator=(const RectJob & other) = delete;
+  RectJob& operator=(const RectJob && other) = delete;
+  ~RectJob();
+
+  void draw_rect(const struct color * const c, int x, int y, int w, int h);
+  void render(float transform[16]);
+};
+
+RectJob::RectJob(std::shared_ptr<GlShader> shader)
+  : _shader(shader),
+    _verts(new GlBuffer<vertex>()),
+    _vert_vao(new GlVAO<vertex>(_verts))
+{
+  _vert_vao->bind_buffer(_verts, 0, 0, sizeof(vertex));
+
+  _vert_vao->enable_attrib(POSITION_LOCATION);
+  _vert_vao->enable_attrib(UV_LOCATION);
+  _vert_vao->enable_attrib(COLOR_LOCATION);
+
+  _vert_vao->bind_attrib(POSITION_LOCATION, 0);
+  _vert_vao->bind_attrib(UV_LOCATION, 0);
+  _vert_vao->bind_attrib(COLOR_LOCATION, 0);
+
+  _vert_vao->attrib_format(POSITION_LOCATION, 3, GL_FLOAT, GL_FALSE, offsetof(vertex, pos));
+  _vert_vao->attrib_format(UV_LOCATION, 2, GL_FLOAT, GL_FALSE, offsetof(vertex, texcoords));
+  _vert_vao->attrib_format(COLOR_LOCATION, 4, GL_FLOAT, GL_FALSE, offsetof(vertex, c));
+}
+
+RectJob::~RectJob() {
+}
+
+void RectJob::render(float transform[16]) {
+  _verts->sync();
+  _shader->bind();
+  _shader->uniform(TRANSFORM_LOCATION, GL_TRUE, transform);
+  _vert_vao->bind();
+  glDrawArrays(GL_TRIANGLES, 0, _verts->num_elems());
+  _verts->clear();
+}
+
+void RectJob::draw_rect(const struct color * const c, int xi, int yi, int w, int h) {
+  float x = static_cast<float>(xi);
+  float y = static_cast<float>(yi);
+  vertex lverts[4] = {
+    {
+      .pos = { .x = x, .y = y, .z = 0 },
+      .texcoords = { .x = 0, .y = 0 },
+      .c = *c
+    },
+    {
+      .pos = { .x = x + w, .y = y + h, .z = 0},
+      .texcoords = { .x = 1, .y = 1 },
+      .c = *c
+    },
+    {
+      .pos = { .x = x, .y = y + h, .z = 0 },
+      .texcoords = { .x = 0, .y = 1 },
+      .c = *c
+    },
+    {
+      .pos = { .x = x + w, .y = y, .z = 0 },
+      .texcoords = { .x = 1, .y = 0 },
+      .c = *c
+    },
+  };
+
+  _verts->push_elements(lverts, 3);
+  lverts[2] = lverts[3];
+  _verts->push_elements(lverts, 3);
+}
+
+struct render_context {
+  GlShader _shader;
+  std::unique_ptr<GlFrameBuffer> _fb;
+  std::unordered_map<struct atlas*, FontBatch> _text_batches;
+  int _win_w;
+  int _win_h;
+
+  FBBlitJob _fb_blitter;
+  RectJob _rect_job;
+
+  void set_size(int w, int h);
+  void do_render();
+  void render_rune(const glyph_spec * spec);
+
+  render_context();
+};
+
+void render_context::do_render() {
+  _shader.bind();
+  _fb->bind(GL_DRAW_FRAMEBUFFER);
+  glClear(GL_COLOR_BUFFER_BIT);
+
+  // Transform matrix in row major order
+  float transform[16] = {
+    2.f / _win_w, 0.f, 0.f, -1.f,
+    0.f, -2.f / _win_h, 0.f, 1.f,
+    0.f, 0.f, 1.f, 0.f,
+    0.f, 0.f, 0.f, 1.f,
+  };
+
+  _shader.uniform(TRANSFORM_LOCATION, GL_TRUE, transform);
+
+  _rect_job.render(transform);
+
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+  _shader.bind();
+  for (auto & kv : _text_batches) {
+    kv.first->bind_texture(TEXTURE_BINDING);
+    kv.second.render();
+  }
+  glDisable(GL_BLEND);
+
+  glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+  _fb_blitter.do_blit(_fb->get_main_color());
+}
+
+void render_context::render_rune(const glyph_spec * spec) {
+  auto kv = _text_batches.find(spec->font);
+  if (kv == _text_batches.end()) {
+    kv = _text_batches.emplace(std::piecewise_construct,
+                               std::forward_as_tuple(spec->font),
+                               std::forward_as_tuple()).first;
+  }
+  kv->second.enqueue_glyph(spec);
+}
+
+void render_context::set_size(int w, int h) {
+  _win_w = w;
+  _win_h = h;
+  _fb.reset(new GlFrameBuffer(w, h, false, GL_DEPTH_COMPONENT24));
+}
+
+render_context::render_context()
+  : _shader(std::string(vert_shader), std::string(frag_shader)),
+    _fb(new GlFrameBuffer(1, 1, false, GL_DEPTH_COMPONENT24)),
+    _win_w(1),
+    _win_h(1),
+    _fb_blitter(std::make_shared<GlShader>(std::string(vert_shader), std::string(framebuffer_frag_shader))),
+    _rect_job(std::make_shared<GlShader>(std::string(vert_shader), std::string(color_shader)))
+{
+  glEnable(GL_FRAMEBUFFER_SRGB);
 }
 
 
@@ -572,4 +888,8 @@ FT_Face atlas_get_face(struct atlas * a) {
 
 void render_rune(struct render_context * rc, const struct glyph_spec * spec) {
   rc->render_rune(spec);
+}
+
+void render_rect(struct render_context * rc, const struct color * const c, int x, int y, int w, int h) {
+  rc->_rect_job.draw_rect(c, x, y, w, h);
 }

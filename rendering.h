@@ -49,6 +49,7 @@ extern "C" {
   FT_Face atlas_get_face(struct atlas * a);
 
   void render_rune(struct render_context * rc, const struct glyph_spec * spec);
+  void render_rect(struct render_context * rc, const struct color * const c, int x, int y, int w, int h);
 #ifdef __cplusplus
 }
 #endif

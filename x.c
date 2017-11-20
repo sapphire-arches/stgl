@@ -31,7 +31,7 @@
 #include "st.h"
 #include "rendering.h"
 
-#define FONT_SIZE (12 * 4)
+#define FONT_SIZE (12 * 2)
 
 /* XEMBED messages */
 #define XEMBED_FOCUS_IN  4
@@ -97,7 +97,7 @@ typedef struct {
 
 static inline ushort sixd_to_16bit(int);
 static int xmakeglyphfontspecs(struct glyph_spec *, const Glyph *, int, int, int);
-static void xdrawglyphfontspecs(const struct glyph_spec *, Glyph, int, int, int);
+static void xdrawglyphfontspecs(struct glyph_spec *, Glyph, int, int, int);
 static void xdrawglyph(Glyph, int, int);
 static void xclear(int, int, int, int);
 static void xdrawcursor(void);
@@ -108,8 +108,8 @@ static void xunloadfont(Font *);
 static void convert_color(XRenderColor * in, struct color * out);
 
 static void gl_draw_rect(Color *, int x, int y, int w, int h);
-static void gl_draw_glyph(Color *, const struct glyph_spec * const);
-static void gl_draw_glyphs(Color *, const struct glyph_spec * const, int);
+static void gl_draw_glyph(Color *, struct glyph_spec *);
+static void gl_draw_glyphs(Color *, struct glyph_spec *, int);
 
 static void expose(XEvent *);
 static void visibility(XEvent *);
@@ -822,7 +822,7 @@ xloadfont(Font *f, FcPattern *pattern)
 	f->lbearing = 0;
 	f->rbearing = DIVCEIL(FONT_SIZE * f->face->max_advance_width, f->face->units_per_EM);
 
-	f->height = DIVCEIL(FONT_SIZE * (f->face->ascender + f->face->descender), f->face->units_per_EM);
+	f->height = DIVCEIL(FONT_SIZE * (f->face->ascender - f->face->descender), f->face->units_per_EM);
 
   // Infer width from the width of the 'W' character
   FT_Load_Char(f->face, 'W', FT_LOAD_RENDER);
@@ -1074,11 +1074,6 @@ xmakeglyphfontspecs(struct glyph_spec *specs, const Glyph *glyphs, int len, int 
 		if (mode == ATTR_WDUMMY)
 			continue;
 
-    /* Skip whitespace characters */
-    if (rune == ' ') {
-      continue;
-    }
-
 		/* Determine font for glyph if different from previous glyph. */
 		if (prevmode != mode) {
 			prevmode = mode;
@@ -1189,7 +1184,7 @@ xmakeglyphfontspecs(struct glyph_spec *specs, const Glyph *glyphs, int len, int 
 }
 
 void
-xdrawglyphfontspecs(const struct glyph_spec *specs, Glyph base, int len, int x, int y)
+xdrawglyphfontspecs(struct glyph_spec *specs, Glyph base, int len, int x, int y)
 {
 	int charlen = len * ((base.mode & ATTR_WIDE) ? 2 : 1);
 	int winx = borderpx + x * win.cw, winy = borderpx + y * win.ch,
@@ -1278,20 +1273,6 @@ xdrawglyphfontspecs(const struct glyph_spec *specs, Glyph base, int len, int x, 
 
 	if (base.mode & ATTR_INVISIBLE)
 		fg = bg;
-
-	/* Intelligent cleaning up of the borders. */
-	// if (x == 0) {
-	// 	xclear(0, (y == 0)? 0 : winy, borderpx,
-	// 		winy + win.ch + ((y >= term.row-1)? win.h : 0));
-	// }
-	// if (x + charlen >= term.col) {
-	// 	xclear(winx + width, (y == 0)? 0 : winy, win.w,
-	// 		((y >= term.row-1)? win.h : (winy + win.ch)));
-	// }
-	// if (y == 0)
-	// 	xclear(winx, 0, winx + width, borderpx);
-	// if (y == term.row-1)
-	// 	xclear(winx, winy + win.ch, winx + width, win.h);
 
 	/* Clean up the region we want to draw to. */
   gl_draw_rect(bg, winx, winy, width, win.ch);
@@ -1857,30 +1838,24 @@ static void set_gl_color(Color * col) {
 }
 
 static void gl_draw_rect(Color * col, int x, int y, int w, int h) {
-  /*
-  glBegin(GL_QUADS);
-  set_gl_color(col);
-  glVertex2f(x, y);
-  glVertex2f(x, y + h);
-  glVertex2f(x + w, y + h);
-  glVertex2f(x + w, y);
-  glEnd();
-  */
-  // printf("%d %d %d %d\n", x, y, w, h);
+  struct color tmpc;
+  convert_color(&col->color, &tmpc);
+  render_rect(dc.rc, &tmpc, x, y, w, h);
 }
 
-static void gl_draw_glyph(Color * col, const struct glyph_spec * const spec) {
-  gl_draw_rect(col, spec->x, spec->y, 1, win.ch);
+static void gl_draw_glyph(Color * col, struct glyph_spec * spec) {
+  struct color tmpc;
+  convert_color(&col->color, &tmpc);
+  spec->c = &tmpc;
+  render_rune(dc.rc, spec);
 }
 
-static void gl_draw_glyphs(Color * col, const struct glyph_spec * const specs, int len) {
+static void gl_draw_glyphs(Color * col, struct glyph_spec * specs, int len) {
   struct color tmpc;
   convert_color(&col->color, &tmpc);
   for (int i = 0; i < len; ++i) {
-    // gl_draw_glyph(col, specs + i);
-    struct glyph_spec spec = specs[i];
-    spec.c = &tmpc;
-    render_rune(dc.rc, &spec);
+    specs[i].c = &tmpc;
+    render_rune(dc.rc, specs + i);
   }
 }
 

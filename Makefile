@@ -28,6 +28,7 @@ config.h:
 
 st.o: config.h st.h win.h
 x.o: arg.h st.h win.h rendering.h
+rendering.o: win.h rendering.h
 
 $(OBJ): config.h config.mk
 
