@@ -4,30 +4,35 @@
 
 include config.mk
 
-SRC = st.c x.c
-OBJ = $(SRC:.c=.o)
+SRC = st.c x.c src/glad.c src/glad_glx.c
+SRC_CPP = rendering.cpp
+OBJ = $(SRC:.c=.o) $(SRC_CPP:.cpp=.o)
 
 all: options st
 
 options:
 	@echo st build options:
 	@echo "CFLAGS  = $(STCFLAGS)"
+	@echo "CXXFLAGS= $(STCXXFLAGS)"
 	@echo "LDFLAGS = $(STLDFLAGS)"
 	@echo "CC      = $(CC)"
 
 config.h:
 	cp config.def.h config.h
 
-.c.o:
-	$(CC) $(STCFLAGS) -c $<
+.cpp.o:
+	$(CXX) $(STDCXXFLAGS) -c $< -o $@
+
+%.o: %.c
+	$(CC) $(STCFLAGS) -c $< -o $@
 
 st.o: config.h st.h win.h
-x.o: arg.h st.h win.h
+x.o: arg.h st.h win.h rendering.h
 
 $(OBJ): config.h config.mk
 
 st: $(OBJ)
-	$(CC) -o $@ $(OBJ) $(STLDFLAGS)
+	$(CXX) -o $@ $(OBJ) $(STLDFLAGS)
 
 clean:
 	rm -f st $(OBJ) st-$(VERSION).tar.gz

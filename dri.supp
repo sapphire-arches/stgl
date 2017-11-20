@@ -1,0 +1,11 @@
+{
+   Intel_DRI
+   Memcheck:Addr8
+   obj:/usr/lib/xorg/modules/dri/i965_dri.so
+}
+
+{
+   Intel_DRI
+   Memcheck:Addr4
+   obj:/usr/lib/xorg/modules/dri/i965_dri.so
+}

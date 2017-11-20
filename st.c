@@ -224,8 +224,9 @@ static STREscape strescseq;
 static int iofd = 1;
 
 char *usedfont = NULL;
-double usedfontsize = 0;
-double defaultfontsize = 0;
+// Disabled for now
+// double usedfontsize = 0;
+// double defaultfontsize = 0;
 
 static uchar utfbyte[UTF_SIZ + 1] = {0x80,    0, 0xC0, 0xE0, 0xF0};
 static uchar utfmask[UTF_SIZ + 1] = {0xC0, 0x80, 0xE0, 0xF0, 0xF8};
@@ -2529,7 +2530,7 @@ tresize(int col, int row)
 	}
 
 	/* resize to new width */
-	term.specbuf = xrealloc(term.specbuf, col * sizeof(GlyphFontSpec));
+	// term.specbuf = xrealloc(term.specbuf, col * sizeof(GlyphFontSpec));
 
 	/* resize to new height */
 	term.line = xrealloc(term.line, row * sizeof(Line));
@@ -2584,7 +2585,9 @@ zoom(const Arg *arg)
 {
 	Arg larg;
 
-	larg.f = usedfontsize + arg->f;
+  fputs("Zoom support has been disabled\n", stderr);
+  exit(240);
+	// larg.f = usedfontsize + arg->f;
 	zoomabs(&larg);
 }
 
@@ -2604,7 +2607,8 @@ zoomreset(const Arg *arg)
 {
 	Arg larg;
 
-	if (defaultfontsize > 0) {
+	if (0) {
+    fputs("Zoom support has been disabled for now\n", stderr);
 		larg.f = defaultfontsize;
 		zoomabs(&larg);
 	}
