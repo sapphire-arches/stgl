@@ -535,6 +535,11 @@ void FontBatch::enqueue_glyph(const glyph_spec * const spec) {
   float base_x = rps.offset.x + static_cast<float>(spec->x);
   float base_y = -rps.offset.y + static_cast<float>(spec->y);
 
+  if (pixel_width < 1 || pixel_height < 1) {
+    // Don't enqueue tiny shapes
+    return;
+  }
+
   vertex lverts[4] = {
     {
       .pos = {
@@ -728,6 +733,10 @@ void RectJob::render(float transform[16]) {
 }
 
 void RectJob::draw_rect(const struct color * const c, int xi, int yi, int w, int h) {
+  if (w == 0 || h == 0) {
+    // Don't enqueue empty rectangles
+    return;
+  }
   float x = static_cast<float>(xi);
   float y = static_cast<float>(yi);
   vertex lverts[4] = {
