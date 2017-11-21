@@ -792,8 +792,6 @@ FBBlitJob::FBBlitJob(std::shared_ptr<GlShader> shader)
     _verts(new GlBuffer<vertex>()),
     _vert_vao(new GlVAO<vertex>(_verts))
 {
-  _vert_vao->bind_buffer(_verts, 0, 0, sizeof(vertex));
-
   _vert_vao->enable_attrib(POSITION_LOCATION);
   _vert_vao->enable_attrib(UV_LOCATION);
   _vert_vao->enable_attrib(COLOR_LOCATION);
@@ -840,6 +838,8 @@ FBBlitJob::~FBBlitJob() {
 }
 
 void FBBlitJob::do_blit(GLuint backing_texture) {
+  _vert_vao->bind_buffer(_verts, 0, 0, sizeof(vertex));
+
   glBindTextureUnit(TEXTURE_BINDING, backing_texture);
   _shader->bind();
   float transform[16] = {

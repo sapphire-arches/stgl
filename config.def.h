@@ -7,6 +7,10 @@
  */
 char font[] = "Source Code Pro";
 int borderpx = 2;
+/*
+ * Font size in pixels
+ */
+int font_size = 18;
 
 /*
  * What program is execed by st depends of these precedence rules:
