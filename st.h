@@ -114,7 +114,9 @@ typedef struct {
 	int col;      /* nb col */
 	Line *line;   /* screen */
 	Line *alt;    /* alternate screen */
-	int *dirty;  /* dirtyness of lines */
+  int **dirty; /* dirtyness of chars */
+  int *per_row_dirty; /* Number of characters dirty in the given row */
+  int dirty_this_frame; /* Number of things marked dirty this frame */
 	TCursor c;    /* cursor */
 	int top;      /* top    scroll limit */
 	int bot;      /* bottom scroll limit */
@@ -192,7 +194,7 @@ void redraw(void);
 
 int tattrset(int);
 void tnew(int, int);
-void tsetdirt(int, int);
+void tsetdirt(int, int, int, int);
 void tsetdirtattr(int);
 int match(uint, uint);
 void ttynew(void);

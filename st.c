@@ -660,7 +660,7 @@ selclear(void)
 		return;
 	sel.mode = SEL_IDLE;
 	sel.ob.x = -1;
-	tsetdirt(sel.nb.y, sel.ne.y);
+	tsetdirt(sel.nb.y, sel.ne.y, 0, term.col-1);
 }
 
 void
@@ -967,15 +967,22 @@ tattrset(int attr)
 }
 
 void
-tsetdirt(int top, int bot)
+tsetdirt(int top, int bot, int left, int right)
 {
-	int i;
+	int i, j;
 
 	LIMIT(top, 0, term.row-1);
 	LIMIT(bot, 0, term.row-1);
+  LIMIT(left, 0, term.col - 1);
+  LIMIT(right, 0, term.col - 1);
 
-	for (i = top; i <= bot; i++)
-		term.dirty[i] = 1;
+	for (i = top; i <= bot; i++) {
+    term.per_row_dirty[i] += right - left + 1;
+    for (j = left; j <= right; ++j) {
+      term.dirty_this_frame++;
+      term.dirty[i][j] = 1;
+    }
+  }
 }
 
 void
@@ -986,7 +993,7 @@ tsetdirtattr(int attr)
 	for (i = 0; i < term.row-1; i++) {
 		for (j = 0; j < term.col-1; j++) {
 			if (term.line[i][j].mode & attr) {
-				tsetdirt(i, i);
+				tsetdirt(i, i, j, j);
 				break;
 			}
 		}
@@ -996,7 +1003,7 @@ tsetdirtattr(int attr)
 void
 tfulldirt(void)
 {
-	tsetdirt(0, term.row-1);
+	tsetdirt(0, term.row-1, 0, term.col-1);
 }
 
 void
@@ -1070,7 +1077,7 @@ tscrolldown(int orig, int n)
 
 	LIMIT(n, 0, term.bot-orig+1);
 
-	tsetdirt(orig, term.bot-n);
+	tsetdirt(orig, term.bot-n, 0, term.col-1);
 	tclearregion(0, term.bot-n+1, term.col-1, term.bot);
 
 	for (i = term.bot; i >= orig+n; i--) {
@@ -1091,7 +1098,7 @@ tscrollup(int orig, int n)
 	LIMIT(n, 0, term.bot-orig+1);
 
 	tclearregion(0, orig, term.col-1, orig+n-1);
-	tsetdirt(orig+n, term.bot);
+	tsetdirt(orig+n, term.bot, 0, term.col-1);
 
 	for (i = orig; i <= term.bot-n; i++) {
 		temp = term.line[i];
@@ -1230,7 +1237,11 @@ tsetchar(Rune u, Glyph *attr, int x, int y)
 		term.line[y][x-1].mode &= ~ATTR_WIDE;
 	}
 
-	term.dirty[y] = 1;
+  if (term.line[y][x].u != u) {
+    term.per_row_dirty[y] += 1;
+    term.dirty_this_frame++;
+    term.dirty[y][x] = 1;
+  }
 	term.line[y][x] = *attr;
 	term.line[y][x].u = u;
 }
@@ -1252,8 +1263,10 @@ tclearregion(int x1, int y1, int x2, int y2)
 	LIMIT(y2, 0, term.row-1);
 
 	for (y = y1; y <= y2; y++) {
-		term.dirty[y] = 1;
+    term.per_row_dirty[y] += x2 - x1 + 1;
 		for (x = x1; x <= x2; x++) {
+      term.dirty_this_frame++;
+      term.dirty[y][x] = 1;
 			gp = &term.line[y][x];
 			if (selected(x, y))
 				selclear();
@@ -2518,15 +2531,18 @@ tresize(int col, int row)
 	for (i = 0; i <= term.c.y - row; i++) {
 		free(term.line[i]);
 		free(term.alt[i]);
+    free(term.dirty[i]);
 	}
 	/* ensure that both src and dst are not NULL */
 	if (i > 0) {
 		memmove(term.line, term.line + i, row * sizeof(Line));
 		memmove(term.alt, term.alt + i, row * sizeof(Line));
+		memmove(term.dirty, term.dirty + i, row * sizeof(*term.dirty));
 	}
 	for (i += row; i < term.row; i++) {
 		free(term.line[i]);
 		free(term.alt[i]);
+    free(term.dirty[i]);
 	}
 
 	/* resize to new width */
@@ -2536,18 +2552,22 @@ tresize(int col, int row)
 	term.line = xrealloc(term.line, row * sizeof(Line));
 	term.alt  = xrealloc(term.alt,  row * sizeof(Line));
 	term.dirty = xrealloc(term.dirty, row * sizeof(*term.dirty));
+  term.per_row_dirty = xrealloc(term.per_row_dirty, row * sizeof(*term.per_row_dirty));
 	term.tabs = xrealloc(term.tabs, col * sizeof(*term.tabs));
 
 	/* resize each row to new width, zero-pad if needed */
 	for (i = 0; i < minrow; i++) {
 		term.line[i] = xrealloc(term.line[i], col * sizeof(Glyph));
 		term.alt[i]  = xrealloc(term.alt[i],  col * sizeof(Glyph));
+    term.dirty[i] = xrealloc(term.dirty[i], col * sizeof(int));
 	}
 
 	/* allocate any new rows */
 	for (/* i = minrow */; i < row; i++) {
 		term.line[i] = xmalloc(col * sizeof(Glyph));
 		term.alt[i] = xmalloc(col * sizeof(Glyph));
+    term.dirty[i] = xmalloc(col * sizeof(int));
+    term.per_row_dirty[i] = 0;
 	}
 	if (col > term.col) {
 		bp = term.tabs + term.col;
@@ -2578,6 +2598,8 @@ tresize(int col, int row)
 		tcursor(CURSOR_LOAD);
 	}
 	term.c = c;
+
+  printf("Terminal resized to %d %d\n", row, col);
 }
 
 void

@@ -32,7 +32,7 @@
 #include "st.h"
 #include "rendering.h"
 
-#define FONT_SIZE 30
+#define FONT_SIZE 18
 
 /* XEMBED messages */
 #define XEMBED_FOCUS_IN  4
@@ -309,7 +309,7 @@ bpress(XEvent *e)
 
 		if (sel.snap != 0)
 			sel.mode = SEL_READY;
-		tsetdirt(sel.nb.y, sel.ne.y);
+		tsetdirt(sel.nb.y, sel.ne.y, 0, term.col - 1);
 		sel.tclick2 = sel.tclick1;
 		sel.tclick1 = now;
 	}
@@ -548,7 +548,7 @@ brelease(XEvent *e)
 		} else
 			selclear_(NULL);
 		sel.mode = SEL_IDLE;
-		tsetdirt(sel.nb.y, sel.ne.y);
+		tsetdirt(sel.nb.y, sel.ne.y, 0, term.col-1);
 	}
 }
 
@@ -573,7 +573,7 @@ bmotion(XEvent *e)
 	getbuttoninfo(e);
 
 	if (oldey != sel.oe.y || oldex != sel.oe.x)
-		tsetdirt(MIN(sel.nb.y, oldsby), MAX(sel.ne.y, oldsey));
+		tsetdirt(MIN(sel.nb.y, oldsby), MAX(sel.ne.y, oldsey), 0, term.col-1);
 }
 
 void
@@ -584,8 +584,6 @@ xresize(int col, int row)
   int ph = row * win.ch;
 	win.tw = MAX(1, pw);
 	win.th = MAX(1, ph);
-
-  render_resize(dc.rc, pw, ph);
 }
 
 ushort
@@ -621,7 +619,7 @@ xloadcolor(int i, const char *name, Color *ncolor)
 void
 xloadcols(void)
 {
-	int i;
+	int i, error;
 	static int loaded;
 	Color *cp;
 
@@ -634,9 +632,9 @@ xloadcols(void)
 	}
 
 	for (i = 0; i < dc.collen; i++)
-		if (!xloadcolor(i, NULL, &dc.col[i])) {
+		if (!(error = xloadcolor(i, NULL, &dc.col[i]))) {
 			if (colorname[i])
-				die("Could not allocate color '%s'\n", colorname[i]);
+				die("Could not allocate color '%s' %d\n", colorname[i], error);
 			else
 				die("Could not allocate color %d\n", i);
 		}
@@ -1061,10 +1059,24 @@ xmakeglyphfontspecs(struct glyph_spec *specs, const Glyph *glyphs, int len, int 
 	FcCharSet *fccharset;
 	int i, f, numspecs = 0;
 
+  int minor_dirty = 1;
+  // int minor_dirty = term.dirty_this_frame < (4 * term.row * term.col / 5);
+  minor_dirty = minor_dirty && term.per_row_dirty[y] < (term.row - 1);
+
 	for (i = 0, xp = winx, yp = winy + font->ascent; i < len; ++i) {
 		/* Fetch rune and mode for current glyph. */
 		rune = glyphs[i].u;
 		mode = glyphs[i].mode;
+    if (term.dirty[y][x + i]) {
+      term.dirty[y][x + i] = 0;
+      if (minor_dirty) {
+        specs[numspecs].dirty = 1;
+      } else {
+        specs[numspecs].dirty = 0;
+      }
+    } else {
+      specs[numspecs].dirty = 0;
+    }
 
 		/* Skip dummy wide-character spacing. */
 		if (mode == ATTR_WDUMMY)
@@ -1152,7 +1164,7 @@ xmakeglyphfontspecs(struct glyph_spec *specs, const Glyph *glyphs, int len, int 
 				frc[frclen].unicodep = 0;
 			}
 
-      frc[frclen].atlas = atlas_create_from_pattern(dc.lib, fontpattern);
+      frc[frclen].atlas = atlas_create_from_pattern(dc.lib, fontpattern, FONT_SIZE);
 			if (!frc[frclen].atlas)
 				die("atlas_create_from_pattern failed seeking fallback font: %s\n",
 					strerror(errno));
@@ -1438,11 +1450,6 @@ drawregion(int x1, int y1, int x2, int y2)
 		return;
 
 	for (y = y1; y < y2; y++) {
-		// if (!term.dirty[y])
-		// 	continue;
-
-		term.dirty[y] = 0;
-
 		specs = dc.specbuf;
 		numspecs = xmakeglyphfontspecs(specs, &term.line[y][x1], x2 - x1, x1, y);
 
@@ -1467,10 +1474,14 @@ drawregion(int x1, int y1, int x2, int y2)
 		}
 		if (i > 0)
 			xdrawglyphfontspecs(specs, base, i, ox, y);
+
+    term.per_row_dirty[y] = 0;
 	}
 	xdrawcursor();
 
   render_do_render(dc.rc);
+
+  term.dirty_this_frame = 0;
 }
 
 void
@@ -1624,6 +1635,8 @@ resize(XEvent *e)
 
 	cresize(w, h);
 	ttyresize();
+
+  render_resize(dc.rc, w, h);
 }
 
 void
@@ -1672,6 +1685,7 @@ run(void)
   printf("OpenGL %s, GLSL %s\n", glGetString(GL_VERSION),
          glGetString(GL_SHADING_LANGUAGE_VERSION));
   dc.rc = render_init();
+  render_resize(dc.rc, w, h);
 
 	usedfont = (opt_font == NULL)? font : opt_font;
 	xloadfonts(usedfont, 0);

@@ -18,10 +18,14 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <functional>
+#include <cmath>
 
 #include FT_BITMAP_H
 
 #define ATLAS_SIZE 4096
+
+#define PARTICLE_FB_SCALE 3
 
 #define POSITION_LOCATION 0
 #define COLOR_LOCATION 1
@@ -70,6 +74,17 @@ static const char * framebuffer_frag_shader =
   "  color = cross_color * texture(font_tex, cross_uv);\n"
   "}\n";
 
+static const char * particle_blit_shader =
+  "#version 450\n"
+  "out vec4 color;\n"
+  "in vec4 cross_color;\n"
+  "in vec2 cross_uv;\n"
+  "layout(location=1, binding=0) uniform sampler2D font_tex;\n"
+  "void main() {\n"
+  "  color = cross_color * texture(font_tex, cross_uv);\n"
+  "  color.a = texture(font_tex, cross_uv).a;\n"
+  "}\n";
+
 static const char * color_shader =
   "#version 450\n"
   "out vec4 color;\n"
@@ -101,6 +116,11 @@ struct __attribute__((packed)) vertex {
 class GlTexture;
 template<typename VertexClass> class GlBuffer;
 template<typename VertexClass> class GlVAO;
+template<typename Updatefunc> class ParticleSystem;
+
+////////////////////////////////////////////////////////////////////////////////
+// GlTexture
+////////////////////////////////////////////////////////////////////////////////
 
 class GlTexture {
 private:
@@ -131,6 +151,10 @@ public:
     return _id;
   }
 };
+
+////////////////////////////////////////////////////////////////////////////////
+// GlFrameBuffer
+////////////////////////////////////////////////////////////////////////////////
 
 class GlFrameBuffer {
 private:
@@ -166,7 +190,7 @@ GlFrameBuffer::GlFrameBuffer(GLsizei width, GLsizei height, bool linear, GLenum 
   printf("Creating frame buffer of size %d %d \n", width, height);
 
 
-  GLenum fmt = (linear) ? GL_RGB8 : GL_SRGB;
+  GLenum fmt = (linear) ? GL_RGB8 : GL_SRGB_ALPHA;
   glTextureStorage2D(_color_id, 1, fmt, width, height);
   glTextureParameteri(_color_id, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
   glTextureParameteri(_color_id, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -203,6 +227,10 @@ void GlFrameBuffer::blit_entirely(GLuint dst) const {
                          GL_LINEAR);
 }
 
+////////////////////////////////////////////////////////////////////////////////
+// GlBuffer
+////////////////////////////////////////////////////////////////////////////////
+
 template<typename T>
 class GlBuffer {
 private:
@@ -214,6 +242,7 @@ private:
   std::vector<T> _storage;
 
   friend GlVAO<T>;
+  template<typename F> friend class ParticleSystem;
 public:
   GlBuffer() {
     glCreateBuffers(1, &_id);
@@ -265,6 +294,10 @@ public:
     return _storage.size();
   }
 };
+
+//////////////////////////////////////////////////////////////////////////////
+// GlShader
+//////////////////////////////////////////////////////////////////////////////
 
 class GlShader {
 private:
@@ -358,6 +391,10 @@ void GlShader::uniform(GLint location, GLboolean transpose, float matrix[16]) {
   glProgramUniformMatrix4fv(_prog_id, location, 1, transpose, matrix);
 }
 
+////////////////////////////////////////////////////////////////////////////////
+// GlVAO
+////////////////////////////////////////////////////////////////////////////////
+
 template<typename VertexType>
 class GlVAO {
 public:
@@ -417,6 +454,126 @@ template<typename V>
 void GlVAO<V>::bind() const {
   glBindVertexArray(_id);
 }
+
+////////////////////////////////////////////////////////////////////////////////
+// Particle system
+////////////////////////////////////////////////////////////////////////////////
+const char * particle_vert_shader =
+  "#version 450\n"
+  "layout(location=0) in vec4 position_life;\n"
+  "layout(location=1) in vec4 in_color;\n"
+  "layout(location=0) uniform mat4 transform;\n"
+  "out float life;\n"
+  "out vec4 cross_color;\n"
+  "void main() {"
+  "  gl_Position = transform * vec4(position_life.xyz, 1);\n"
+  "  gl_PointSize = 3.f;\n"
+  "  cross_color = in_color;\n"
+  "  life = position_life.w;\n"
+  "}\n";
+
+static const char * particle_frag_shader =
+  "#version 450\n"
+  "out vec4 color;\n"
+  "in vec4 cross_color;\n"
+  "in float life;\n"
+  "void main() {\n"
+  "  color = cross_color;\n"
+  "}\n";
+
+struct __attribute__((packed)) particle {
+  float x, y, z, t;
+  float vx, vy, vz;
+  struct color c;
+};
+
+template<typename UpdateFunc>
+class ParticleSystem {
+private:
+  std::shared_ptr<GlBuffer<particle>> _particles;
+  std::shared_ptr<GlVAO<particle>> _vao;
+  GlShader _shader;
+  UpdateFunc _update;
+  float _max_age;
+public:
+  ParticleSystem(UpdateFunc f, float max_age);
+  ParticleSystem(const ParticleSystem & other) = delete;
+  ParticleSystem(const ParticleSystem && other);
+  ParticleSystem & operator=(ParticleSystem & other) = delete;
+  ParticleSystem & operator=(ParticleSystem && other);
+  ~ParticleSystem();
+
+  void add_particle(float x, float y, float vx, float vy, float t, const color & c);
+  void do_update(float dt);
+  void render(float transform[16]);
+};
+
+template<typename F>
+ParticleSystem<F>::ParticleSystem(F f, float max_age)
+  : _particles(new GlBuffer<particle>()),
+    _vao(new GlVAO<particle>(_particles)),
+    _shader(std::string(particle_vert_shader), std::string(particle_frag_shader)),
+    _update(f),
+    _max_age(max_age)
+{
+  _vao->bind_buffer(_particles, 0, 0, sizeof(particle));
+
+  _vao->enable_attrib(POSITION_LOCATION);
+  _vao->enable_attrib(COLOR_LOCATION);
+
+  _vao->bind_attrib(POSITION_LOCATION, 0);
+  _vao->bind_attrib(COLOR_LOCATION, 0);
+
+  _vao->attrib_format(POSITION_LOCATION, 4, GL_FLOAT, GL_FALSE, offsetof(particle, x));
+  _vao->attrib_format(COLOR_LOCATION, 4, GL_FLOAT, GL_FALSE, offsetof(particle, c));
+}
+
+template<typename F>
+ParticleSystem<F>::~ParticleSystem() {}
+
+template<typename F>
+void ParticleSystem<F>::add_particle(float x, float y, float vx, float vy, float t, const color & c) {
+  particle np = {
+    .x = x, .y = y, .t = t, .c = c,
+    .vx = vx, .vy = vy,
+  };
+  if (_particles->_storage.size() > 32192) {
+    int ridx = rand() % 32192;
+    _particles->_storage[ridx] = np;
+  } else {
+    _particles->_storage.push_back(np);
+  }
+}
+
+template<typename F>
+void ParticleSystem<F>::do_update(float dt) {
+  dt /= _max_age;
+  auto & store = _particles->_storage;
+  for (auto i = 0; i < store.size(); i++) {
+    _update(store[i], dt);
+    if (store[i].t > 1.f) {
+      store[i] = store[store.size() - 1];
+      store.pop_back();
+    }
+  }
+}
+
+template<typename F>
+void ParticleSystem<F>::render(float transform[16]) {
+  if (_particles->num_elems() == 0) {
+    return;
+  }
+  _particles->sync();
+  _shader.bind();
+  _vao->bind();
+  _shader.uniform(TRANSFORM_LOCATION, GL_TRUE, transform);
+
+  glDrawArrays(GL_POINTS, 0, _particles->num_elems());
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// atlas
+////////////////////////////////////////////////////////////////////////////////
 
 struct glyph_render_params{
   struct rect uvs;
@@ -489,6 +646,10 @@ struct atlas {
     glBindTexture(GL_TEXTURE_2D, tex.GetID());
   }
 };
+
+////////////////////////////////////////////////////////////////////////////////
+// FontBatch
+////////////////////////////////////////////////////////////////////////////////
 
 class FontBatch {
 private:
@@ -600,6 +761,10 @@ void FontBatch::render() {
   _verts->clear();
 }
 
+////////////////////////////////////////////////////////////////////////////////
+//  FBBlitJob
+////////////////////////////////////////////////////////////////////////////////
+
 class FBBlitJob {
 private:
   std::shared_ptr<GlShader> _shader;
@@ -682,6 +847,10 @@ void FBBlitJob::do_blit(GLuint backing_texture) {
   _vert_vao->bind();
   glDrawArrays(GL_TRIANGLES, 0, _verts->num_elems());
 }
+
+////////////////////////////////////////////////////////////////////////////////
+//  RectJob
+////////////////////////////////////////////////////////////////////////////////
 
 class RectJob {
 private:
@@ -767,14 +936,45 @@ void RectJob::draw_rect(const struct color * const c, int xi, int yi, int w, int
   _verts->push_elements(lverts, 3);
 }
 
+////////////////////////////////////////////////////////////////////////////////
+//  render_context
+////////////////////////////////////////////////////////////////////////////////
+
+void flame_curve(float f, color & c) {
+  // t0 = 1
+  // t1 = f
+  float t2 = 2 * f * f - 1;
+  float t3 = f * (2 * t2 - 1); // 2 f t2 -  t1
+  float t4 = 2 * f * t3 - t2;
+
+  const float rc[] = { -7.42828172, 13.49066809, -9.02608052,  3.68452288, -0.71117265 };
+  const float gc[] = { -4.56657944, 8.57004895, -6.62752371, 3.5393551, -0.99186063 };
+  const float bc[] = { 8.60556488, -14.57317637,  8.7124878, -3.42279269,  0.7211981 };
+  c.r = rc[0] + f * rc[1] + t2 * rc[2] + t3 * rc[3] + t4 * rc[4];
+  c.g = gc[0] + f * gc[1] + t2 * gc[2] + t3 * gc[3] + t4 * gc[4];
+  c.b = bc[0] + f * bc[1] + t2 * bc[2] + t3 * bc[3] + t4 * bc[4];
+  c.a = 1.f - f;
+}
+
+void basic_update(particle & p, float dt) {
+  p.t += dt;
+  p.x += dt * p.vx;
+  p.y += dt * p.vy;
+  p.vy += 100.f * dt;
+  flame_curve(p.t, p.c);
+}
+
 struct render_context {
   GlShader _shader;
   std::unique_ptr<GlFrameBuffer> _fb;
+  std::unique_ptr<GlFrameBuffer> _particle_fb;
   std::unordered_map<struct atlas*, FontBatch> _text_batches;
   int _win_w;
   int _win_h;
+  ParticleSystem<std::function<void(particle&, float)>> _parts;
 
   FBBlitJob _fb_blitter;
+  FBBlitJob _particle_blitter;
   RectJob _rect_job;
 
   void set_size(int w, int h);
@@ -786,9 +986,14 @@ struct render_context {
 };
 
 void render_context::do_render() {
-  _shader.bind();
-  _fb->bind(GL_DRAW_FRAMEBUFFER);
-  glClear(GL_COLOR_BUFFER_BIT);
+  ///
+  // Update step
+  ///
+  _parts.do_update(0.16f);
+
+  ///
+  // Actual render step
+  ///
 
   // Transform matrix in row major order
   float transform[16] = {
@@ -798,17 +1003,40 @@ void render_context::do_render() {
     0.f, 0.f, 0.f, 1.f,
   };
 
-  _shader.uniform(TRANSFORM_LOCATION, GL_TRUE, transform);
+  // Render particles
+  _particle_fb->bind(GL_DRAW_FRAMEBUFFER);
+  glViewport(0, 0, _win_w / PARTICLE_FB_SCALE, _win_h / PARTICLE_FB_SCALE);
+  glClearColor(0.f, 0.f, 0.f, 0.f);
+  glClear(GL_COLOR_BUFFER_BIT);
+  _parts.render(transform);
 
+  // Bind main framebuffer
+  _fb->bind(GL_DRAW_FRAMEBUFFER);
+  glClear(GL_COLOR_BUFFER_BIT);
+
+  // Update viewport to correct size
+  glViewport(0, 0, _win_w, _win_h);
+
+  // Render rectangles
   _rect_job.render(transform);
 
+  // Render fonts
   glEnable(GL_BLEND);
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-  _shader.bind();
-  for (auto & kv : _text_batches) {
-    kv.first->bind_texture(TEXTURE_BINDING);
-    kv.second.render();
+  {
+    _shader.bind();
+    _shader.uniform(TRANSFORM_LOCATION, GL_TRUE, transform);
+
+    _shader.bind();
+    for (auto & kv : _text_batches) {
+      kv.first->bind_texture(TEXTURE_BINDING);
+      kv.second.render();
+    }
+
   }
+
+  // Blit particles
+  _particle_blitter.do_blit(_particle_fb->get_main_color());
   glDisable(GL_BLEND);
 
   glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
@@ -822,14 +1050,25 @@ void render_context::render_rune(const glyph_spec * spec) {
                                std::forward_as_tuple(spec->font),
                                std::forward_as_tuple()).first;
   }
+  if (spec->dirty) {
+    color c = *spec->c;
+    c.a = 0.5f;
+    for (int i = 0; i < 512; ++i) {
+      const float jitter = -50.f * (rand() /(float) RAND_MAX) - 10.f;
+      float x_jitter = 2.f * rand() / (float) RAND_MAX - 1.f;
+      float y_jitter = sqrt(1 - x_jitter * x_jitter);
+      float t_jitter = 0.3f * (rand() / (float) RAND_MAX);
+      _parts.add_particle(spec->x, spec->y, jitter * x_jitter - jitter / 2, -50.f + jitter * y_jitter, t_jitter, c);
+    }
+  }
   kv->second.enqueue_glyph(spec);
 }
 
 void render_context::set_size(int w, int h) {
   _win_w = w;
   _win_h = h;
-  glViewport(0, 0, w, h);
   _fb.reset(new GlFrameBuffer(w, h, false, GL_DEPTH_COMPONENT24));
+  _particle_fb.reset(new GlFrameBuffer(w / PARTICLE_FB_SCALE, h / PARTICLE_FB_SCALE, false, GL_DEPTH_COMPONENT24));
 }
 
 void render_context::set_y_nudge(int y) {
@@ -839,9 +1078,12 @@ void render_context::set_y_nudge(int y) {
 render_context::render_context()
   : _shader(std::string(vert_shader), std::string(frag_shader)),
     _fb(new GlFrameBuffer(1, 1, false, GL_DEPTH_COMPONENT24)),
+    _particle_fb(new GlFrameBuffer(1, 1, false, GL_DEPTH_COMPONENT24)),
     _win_w(1),
     _win_h(1),
+    _parts(basic_update, 16.f),
     _fb_blitter(std::make_shared<GlShader>(std::string(vert_shader), std::string(framebuffer_frag_shader))),
+    _particle_blitter(std::make_shared<GlShader>(std::string(vert_shader), std::string(particle_blit_shader))),
     _rect_job(std::make_shared<GlShader>(std::string(vert_shader), std::string(color_shader)))
 {
   glEnable(GL_FRAMEBUFFER_SRGB);
@@ -860,6 +1102,7 @@ void render_destroy(struct render_context * rc) {
 }
 
 void render_resize(struct render_context * rc, int w, int h) {
+  printf("Render resize to %d %d\n", w, h);
   rc->set_size(w, h);
 }
 
@@ -875,7 +1118,7 @@ struct atlas * atlas_create_from_face(FT_Face f) {
   return new atlas(f);
 }
 
-struct atlas * atlas_create_from_pattern(FT_Library lib, FcPattern * pat) {
+struct atlas * atlas_create_from_pattern(FT_Library lib, FcPattern * pat, FT_UInt size) {
   char * file_name;
   int file_index;
   if (FcPatternGetString(pat, FC_FILE, 0, (FcChar8**)&file_name) != FcResultMatch) {
@@ -887,10 +1130,11 @@ struct atlas * atlas_create_from_pattern(FT_Library lib, FcPattern * pat) {
     return nullptr;
   }
   FT_Face f;
-  if (!FT_New_Face(lib, file_name, file_index, &f)) {
+  if (FT_New_Face(lib, file_name, file_index, &f) != 0) {
     fputs("st: failed to open font file\n", stderr);
     return nullptr;
   }
+  FT_Set_Pixel_Sizes(f, 0, size);
   return atlas_create_from_face(f);
 }
 

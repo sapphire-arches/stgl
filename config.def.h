@@ -5,7 +5,7 @@
  *
  * font: see http://freedesktop.org/software/fontconfig/fontconfig-user.html
  */
-char font[] = "Liberation Mono:pixelsize=12:antialias=true:autohint=true";
+char font[] = "Source Code Pro";
 int borderpx = 2;
 
 /*
@@ -84,25 +84,42 @@ static unsigned int tabspaces = 8;
 
 /* Terminal colors (16 first used in escape sequence) */
 const char *colorname[] = {
-	/* 8 normal colors */
-	"black",
-	"red3",
-	"green3",
-	"yellow3",
-	"blue2",
-	"magenta3",
-	"cyan3",
-	"gray90",
+  "#181818",
+  "#ab4642",
+  "#a1b56c",
+  "#f7ca88",
+  "#7cafc2",
+  "#ba8baf",
+  "#86c1b9",
+  "#d8d8d8",
+  "#585858",
+  "#ab4642",
+  "#a1b56c",
+  "#f7ca88",
+  "#7cafc2",
+  "#ba8baf",
+  "#86c1b9",
+  "#f8f8f8",
 
-	/* 8 bright colors */
-	"gray50",
-	"red",
-	"green",
-	"yellow",
-	"#5c5cff",
-	"magenta",
-	"cyan",
-	"white",
+	/* 8 normal colors */
+	// "color0",
+	// "red3",
+	// "green3",
+	// "yellow3",
+	// "blue2",
+	// "magenta3",
+	// "cyan3",
+	// "gray90",
+
+	// /* 8 bright colors */
+	// "gray50",
+	// "red",
+	// "green",
+	// "yellow",
+	// "#5c5cff",
+	// "magenta",
+	// "cyan",
+	// "white",
 
 	[255] = 0,
 

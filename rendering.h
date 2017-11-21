@@ -28,6 +28,7 @@ extern "C" {
     FT_UInt glyph;
     struct color * c;
     struct atlas * font;
+    bool dirty;
     int x, y;
   };
 
@@ -44,7 +45,7 @@ extern "C" {
 
   /** Create an atlas. Takes ownership of the font */
   struct atlas * atlas_create_from_face(FT_Face f);
-  struct atlas * atlas_create_from_pattern(FT_Library lib, FcPattern * pat);
+  struct atlas * atlas_create_from_pattern(FT_Library lib, FcPattern * pat, FT_UInt size);
   /** Destroy an atlas. Second parameter is true if we should also destroy the face */
   void atlas_destroy(struct atlas * a, bool);
   FT_Face atlas_get_face(struct atlas * a);
