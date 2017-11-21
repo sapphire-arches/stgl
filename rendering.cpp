@@ -233,11 +233,14 @@ void GlFrameBuffer::blit_entirely(GLuint dst) const {
 
 template<typename T>
 class GlBuffer {
+  const static int NUM_BUFFERS = 1;
 private:
   /** Name of the buffer under management */
-  GLuint _id;
+  GLuint _ids[NUM_BUFFERS];
+  /** Current buffer */
+  int _buffer;
   /** The number of bytes allocated in that buffer */
-  size_t _capacity;
+  size_t _capacities[NUM_BUFFERS];
   /** CPU-side storage for all the information */
   std::vector<T> _storage;
 
@@ -245,25 +248,28 @@ private:
   template<typename F> friend class ParticleSystem;
 public:
   GlBuffer() {
-    glCreateBuffers(1, &_id);
+    glCreateBuffers(NUM_BUFFERS, _ids);
+    _buffer = 0;
     _storage.reserve(1); // Make sure there is room for at least 1 element
-    _capacity = _storage.capacity() * sizeof(T);
-    glNamedBufferData(_id, _capacity, NULL, GL_STREAM_DRAW);
+    for (auto i = 0; i < NUM_BUFFERS; ++i) {
+      _capacities[i] = _storage.capacity() * sizeof(T);
+      glNamedBufferData(_ids[i], _capacities[i], NULL, GL_STREAM_DRAW);
+    }
   }
 
   GlBuffer(GlBuffer & other) = delete;
 
   GlBuffer(GlBuffer && other) {
-    _id = other._id;
-    _capacity = other._capacity;
+    _ids = other._ids;
+    _capacities = other._capacities;
     _storage = std::move(other._storage);
   }
 
   GlBuffer & operator= (GlBuffer & other) = delete;
 
   GlBuffer & operator= (GlBuffer && other) {
-    _id = other._id;
-    _capacity = other._capacity;
+    _ids = other._ids;
+    _capacities = other._capacities;
     _storage = std::move(other._storage);
     return *this;
   }
@@ -277,13 +283,13 @@ public:
   }
 
   void sync() {
-    // printf("Syncing %d objects\n", _storage.size());
     size_t bsize = _storage.size() * sizeof(T);
-    if (_capacity < bsize) {
-      _capacity = bsize;
-      glNamedBufferData(_id, _capacity, NULL, GL_STREAM_DRAW);
+    if (_capacities[_buffer] < bsize) {
+      _capacities[_buffer] = bsize;
+      glNamedBufferData(_ids[_buffer], _capacities[_buffer], NULL, GL_STREAM_DRAW);
     }
-    glNamedBufferSubData(_id, 0, bsize, _storage.data());
+    glNamedBufferSubData(_ids[_buffer], 0, bsize, _storage.data());
+    _buffer = (_buffer + 1) % NUM_BUFFERS;
   }
 
   void clear() {
@@ -431,7 +437,7 @@ GlVAO<V>::~GlVAO() {
 
 template<typename V>
 void GlVAO<V>::bind_buffer(buffer_const_ref buffer, GLuint buffer_index, GLintptr offset, GLsizei stride) {
-  glVertexArrayVertexBuffer(_id, buffer_index, buffer->_id, offset, stride);
+  glVertexArrayVertexBuffer(_id, buffer_index, buffer->_ids[buffer->_buffer], offset, stride);
 }
 
 template<typename V>
@@ -516,8 +522,6 @@ ParticleSystem<F>::ParticleSystem(F f, float max_age)
     _update(f),
     _max_age(max_age)
 {
-  _vao->bind_buffer(_particles, 0, 0, sizeof(particle));
-
   _vao->enable_attrib(POSITION_LOCATION);
   _vao->enable_attrib(COLOR_LOCATION);
 
@@ -563,6 +567,8 @@ void ParticleSystem<F>::render(float transform[16]) {
   if (_particles->num_elems() == 0) {
     return;
   }
+  _vao->bind_buffer(_particles, 0, 0, sizeof(particle));
+
   _particles->sync();
   _shader.bind();
   _vao->bind();
@@ -670,8 +676,6 @@ public:
 FontBatch::FontBatch() :
   _verts(new GlBuffer<vertex>()),
   _vert_vao(new GlVAO<vertex>(_verts)) {
-  _vert_vao->bind_buffer(_verts, 0, 0, sizeof(vertex));
-
   _vert_vao->enable_attrib(POSITION_LOCATION);
   _vert_vao->enable_attrib(UV_LOCATION);
   _vert_vao->enable_attrib(COLOR_LOCATION);
@@ -755,6 +759,8 @@ void FontBatch::enqueue_glyph(const glyph_spec * const spec) {
 }
 
 void FontBatch::render() {
+  _vert_vao->bind_buffer(_verts, 0, 0, sizeof(vertex));
+
   _verts->sync();
   _vert_vao->bind();
   glDrawArrays(GL_TRIANGLES, 0, _verts->num_elems());
@@ -874,8 +880,6 @@ RectJob::RectJob(std::shared_ptr<GlShader> shader)
     _verts(new GlBuffer<vertex>()),
     _vert_vao(new GlVAO<vertex>(_verts))
 {
-  _vert_vao->bind_buffer(_verts, 0, 0, sizeof(vertex));
-
   _vert_vao->enable_attrib(POSITION_LOCATION);
   _vert_vao->enable_attrib(UV_LOCATION);
   _vert_vao->enable_attrib(COLOR_LOCATION);
@@ -893,6 +897,7 @@ RectJob::~RectJob() {
 }
 
 void RectJob::render(float transform[16]) {
+  _vert_vao->bind_buffer(_verts, 0, 0, sizeof(vertex));
   _verts->sync();
   _shader->bind();
   _shader->uniform(TRANSFORM_LOCATION, GL_TRUE, transform);
@@ -966,6 +971,7 @@ void basic_update(particle & p, float dt) {
 
 struct render_context {
   GlShader _shader;
+  color _clear_color;
   std::unique_ptr<GlFrameBuffer> _fb;
   std::unique_ptr<GlFrameBuffer> _particle_fb;
   std::unordered_map<struct atlas*, FontBatch> _text_batches;
@@ -981,6 +987,7 @@ struct render_context {
   void set_y_nudge(int y);
   void do_render();
   void render_rune(const glyph_spec * spec);
+  void set_clear_color(const color & c);
 
   render_context();
 };
@@ -1012,6 +1019,7 @@ void render_context::do_render() {
 
   // Bind main framebuffer
   _fb->bind(GL_DRAW_FRAMEBUFFER);
+  glClearColor(_clear_color.r, _clear_color.g, _clear_color.b, _clear_color.a);
   glClear(GL_COLOR_BUFFER_BIT);
 
   // Update viewport to correct size
@@ -1064,6 +1072,10 @@ void render_context::render_rune(const glyph_spec * spec) {
   kv->second.enqueue_glyph(spec);
 }
 
+void render_context::set_clear_color(const color & c) {
+  _clear_color = c;
+}
+
 void render_context::set_size(int w, int h) {
   _win_w = w;
   _win_h = h;
@@ -1108,6 +1120,10 @@ void render_resize(struct render_context * rc, int w, int h) {
 
 void render_set_y_nudge(struct render_context * rc, int y) {
   rc->set_y_nudge(y);
+}
+
+void render_set_clear_color(struct render_context * rc, struct color * c) {
+  rc->set_clear_color(*c);
 }
 
 void render_do_render(struct render_context * rc) {
