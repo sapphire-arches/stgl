@@ -1,1 +1,4 @@
 tags
+*.o
+st
+config.h
