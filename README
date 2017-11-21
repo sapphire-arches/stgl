@@ -1,12 +1,15 @@
-st - simple terminal
---------------------
-st is a simple terminal emulator for X which sucks less.
+stgl - (ex) simple terminal (OpenGL edition!)
+---------------------------------------------
+stgl is a terminal emulator for X which sucks more than the original st,
+but it's got neat fire effects!.
 
 
 Requirements
 ------------
-In order to build st you need the Xlib header files.
+In order to build stgl you need the Xlib header files and a libGL implementation.
 
+In order to run stlgl you will need a reasonably modern graphics card with
+OpenGL 4.5 support.
 
 Installation
 ------------
