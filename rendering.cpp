@@ -20,6 +20,7 @@
 #include <vector>
 #include <functional>
 #include <cmath>
+#include <glm/glm.hpp>
 
 #include FT_BITMAP_H
 
@@ -491,6 +492,17 @@ struct __attribute__((packed)) particle {
   float x, y, z, t;
   float vx, vy, vz;
   struct color c;
+
+  particle(const glm::vec3 & pos, const glm::vec3 & vel, float t, const color & c) {
+    x = pos.x;
+    y = pos.y;
+    z = pos.z;
+    this->t = t;
+    vx = vel.x;
+    vy = vel.y;
+    vz = vel.z;
+    this->c = c;
+  }
 };
 
 template<typename UpdateFunc>
@@ -509,7 +521,7 @@ public:
   ParticleSystem & operator=(ParticleSystem && other);
   ~ParticleSystem();
 
-  void add_particle(float x, float y, float vx, float vy, float t, const color & c);
+  void add_particle(const glm::vec3 & pos, const glm::vec3 & vel, float t, const color & c);
   void do_update(float dt);
   void render(float transform[16]);
 };
@@ -536,11 +548,8 @@ template<typename F>
 ParticleSystem<F>::~ParticleSystem() {}
 
 template<typename F>
-void ParticleSystem<F>::add_particle(float x, float y, float vx, float vy, float t, const color & c) {
-  particle np = {
-    .x = x, .y = y, .t = t, .c = c,
-    .vx = vx, .vy = vy,
-  };
+void ParticleSystem<F>::add_particle(const glm::vec3 & pos, const glm::vec3 & vel, float t, const color & c) {
+  particle np(pos, vel, t, c);
   if (_particles->_storage.size() > 32192) {
     int ridx = rand() % 32192;
     _particles->_storage[ridx] = np;
@@ -1066,7 +1075,9 @@ void render_context::render_rune(const glyph_spec * spec) {
       float x_jitter = 2.f * rand() / (float) RAND_MAX - 1.f;
       float y_jitter = sqrt(1 - x_jitter * x_jitter);
       float t_jitter = 0.3f * (rand() / (float) RAND_MAX);
-      _parts.add_particle(spec->x, spec->y, jitter * x_jitter - jitter / 2, -50.f + jitter * y_jitter, t_jitter, c);
+      _parts.add_particle(glm::vec3(spec->x, spec->y, 0),
+                          glm::vec3(jitter * x_jitter - jitter / 2, -50.f + jitter * y_jitter, 0),
+                          t_jitter, c);
     }
   }
   kv->second.enqueue_glyph(spec);
