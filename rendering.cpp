@@ -29,6 +29,16 @@
 
 extern int font_size;
 
+// Feel factors
+#define JOUNCE_MAX_AMOUNT 0.005f
+#define JOUNCE_GROW_FACTOR 0.5f
+#define JOUNCE_SHIFT 8.f
+#define JOUNCE_MULTIPLIER 8.f
+#define JOUNCE_DECAY_FACTOR 0.9f
+#define ROTATION_MAX 0.00314 // About 0.1% of pi
+#define KEYPRESS_TIMEOUT 0.5f
+
+// Technical parameters
 #define ATLAS_SIZE 4096
 
 #define PARTICLE_FB_SCALE 3
@@ -991,6 +1001,7 @@ struct render_context {
   float _time_since_keypress;
   float _rotation;
   glm::vec2 _jounce;
+  float _jounce_factor;
 
   FBBlitJob _fb_blitter;
   FBBlitJob _particle_blitter;
@@ -1014,11 +1025,15 @@ void render_context::compute_transform(glm::mat4 & transform) {
   //  3 rotate a bit
   //  4 translate by the keypress drop
   float keypress_drop;
-  if (_time_since_keypress < 1.f) {
-    keypress_drop = 1.f - _time_since_keypress * _time_since_keypress;
+  if (_time_since_keypress < KEYPRESS_TIMEOUT) {
+    keypress_drop = KEYPRESS_TIMEOUT - _time_since_keypress;
+    keypress_drop /= KEYPRESS_TIMEOUT;
+    float jounce_fac = 1.f / (1.f + exp(_jounce_factor * -JOUNCE_MULTIPLIER + JOUNCE_SHIFT));
+    keypress_drop *= jounce_fac;
   } else {
     keypress_drop = 0.f;
     _jounce = {0, 0};
+    _jounce_factor *= JOUNCE_DECAY_FACTOR;
   }
 
   // Get in to eye space
@@ -1140,12 +1155,13 @@ void render_context::on_key_press(const TCursor & c, const char * const buf, int
   keypress_loc.y = c.y * font_size;
   _rotation = rand() / (float)RAND_MAX;
   // About 0.1% of pi
-  _rotation *= 0.00314;
+  _rotation *= ROTATION_MAX;
   if (keypress_loc.x < _win_w / 2.f) {
     _rotation *= -1;
   }
   if (glm::dot(_jounce, _jounce) < 0.01) {
-    const float jounce_amount = 0.005f;
+    const float jounce_amount = JOUNCE_MAX_AMOUNT;
+    _jounce_factor += JOUNCE_GROW_FACTOR;
     _jounce.x = jounce_amount * rand() / (float)RAND_MAX - (jounce_amount / 2);
     _jounce.y = jounce_amount * -rand() / (float)RAND_MAX - (jounce_amount / 2);
   }
@@ -1161,6 +1177,7 @@ render_context::render_context()
     _time_since_keypress(10000.f),
     _rotation(0.f),
     _jounce(0.f),
+    _jounce_factor(0.f),
     _fb_blitter(std::make_shared<GlShader>(std::string(vert_shader), std::string(framebuffer_frag_shader))),
     _particle_blitter(std::make_shared<GlShader>(std::string(vert_shader), std::string(particle_blit_shader))),
     _rect_job(std::make_shared<GlShader>(std::string(vert_shader), std::string(color_shader)))

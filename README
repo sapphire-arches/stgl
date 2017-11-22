@@ -3,6 +3,11 @@ stgl - (ex) simple terminal (OpenGL edition!)
 stgl is a terminal emulator for X which sucks more than the original st,
 but it's got neat fire effects!.
 
+Configuration
+-------------
+See config.h for font configuration, and the header of rendering.cpp for feel
+factor configuration.
+
 
 Requirements
 ------------
