@@ -1606,6 +1606,9 @@ kpress(XEvent *ev)
 			len = 2;
 		}
 	}
+  if (dc.rc) {
+    render_send_keypress(dc.rc, term.c, buf, len);
+  }
 	ttysend(buf, len);
 }
 
