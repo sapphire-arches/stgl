@@ -190,7 +190,7 @@ GlFrameBuffer::GlFrameBuffer(GLsizei width, GLsizei height, bool linear, GLenum 
   printf("Creating frame buffer of size %d %d \n", width, height);
 
 
-  GLenum fmt = (linear) ? GL_RGB8 : GL_SRGB_ALPHA;
+  GLenum fmt = (linear) ? GL_RGB8 : GL_SRGB8_ALPHA8;
   glTextureStorage2D(_color_id, 1, fmt, width, height);
   glTextureParameteri(_color_id, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
   glTextureParameteri(_color_id, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
