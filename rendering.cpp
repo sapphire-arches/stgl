@@ -2,6 +2,9 @@
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <stdint.h>
+#include <glm/glm.hpp>
+#include <glm/gtc/type_ptr.hpp>
+#include <glm/gtx/transform.hpp>
 
 #include "arg.h"
 
@@ -23,6 +26,8 @@
 #include <glm/glm.hpp>
 
 #include FT_BITMAP_H
+
+extern int font_size;
 
 #define ATLAS_SIZE 4096
 
@@ -325,7 +330,7 @@ public:
   ~GlShader();
 
   void bind(void);
-  void uniform(GLint location, GLboolean transpose, float matrix[16]);
+  void uniform(GLint location, GLboolean transpose, const glm::mat4 & m);
 };
 
 static void PrintShaderInfoLog(GLuint shader) {
@@ -394,8 +399,8 @@ void GlShader::bind() {
   glUseProgram(_prog_id);
 }
 
-void GlShader::uniform(GLint location, GLboolean transpose, float matrix[16]) {
-  glProgramUniformMatrix4fv(_prog_id, location, 1, transpose, matrix);
+void GlShader::uniform(GLint location, GLboolean transpose, const glm::mat4 & mat) {
+  glProgramUniformMatrix4fv(_prog_id, location, 1, transpose, glm::value_ptr(mat));
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -523,7 +528,7 @@ public:
 
   void add_particle(const glm::vec3 & pos, const glm::vec3 & vel, float t, const color & c);
   void do_update(float dt);
-  void render(float transform[16]);
+  void render(const glm::mat4& t);
 };
 
 template<typename F>
@@ -562,7 +567,7 @@ template<typename F>
 void ParticleSystem<F>::do_update(float dt) {
   dt /= _max_age;
   auto & store = _particles->_storage;
-  for (auto i = 0; i < store.size(); i++) {
+  for (auto i = 0ul; i < store.size(); i++) {
     _update(store[i], dt);
     if (store[i].t > 1.f) {
       store[i] = store[store.size() - 1];
@@ -572,7 +577,7 @@ void ParticleSystem<F>::do_update(float dt) {
 }
 
 template<typename F>
-void ParticleSystem<F>::render(float transform[16]) {
+void ParticleSystem<F>::render(const glm::mat4 & transform) {
   if (_particles->num_elems() == 0) {
     return;
   }
@@ -851,12 +856,7 @@ void FBBlitJob::do_blit(GLuint backing_texture) {
 
   glBindTextureUnit(TEXTURE_BINDING, backing_texture);
   _shader->bind();
-  float transform[16] = {
-    1.f, 0.f, 0.f, 0.f,
-    0.f, 1.f, 0.f, 0.f,
-    0.f, 0.f, 1.f, 0.f,
-    0.f, 0.f, 0.f, 1.f,
-  };
+  auto transform = glm::mat4(1.f);
   _shader->uniform(TRANSFORM_LOCATION, GL_TRUE, transform);
 
   _vert_vao->bind();
@@ -881,7 +881,7 @@ public:
   ~RectJob();
 
   void draw_rect(const struct color * const c, int x, int y, int w, int h);
-  void render(float transform[16]);
+  void render(const glm::mat4 & transform);
 };
 
 RectJob::RectJob(std::shared_ptr<GlShader> shader)
@@ -905,7 +905,7 @@ RectJob::RectJob(std::shared_ptr<GlShader> shader)
 RectJob::~RectJob() {
 }
 
-void RectJob::render(float transform[16]) {
+void RectJob::render(const glm::mat4 & transform) {
   _vert_vao->bind_buffer(_verts, 0, 0, sizeof(vertex));
   _verts->sync();
   _shader->bind();
@@ -988,6 +988,10 @@ struct render_context {
   int _win_h;
   ParticleSystem<std::function<void(particle&, float)>> _parts;
 
+  float _time_since_keypress;
+  float _rotation;
+  glm::vec2 _jounce;
+
   FBBlitJob _fb_blitter;
   FBBlitJob _particle_blitter;
   RectJob _rect_job;
@@ -997,27 +1001,59 @@ struct render_context {
   void do_render();
   void render_rune(const glyph_spec * spec);
   void set_clear_color(const color & c);
+  void on_key_press(const TCursor & c, const char * const buf, int buflen);
+  void compute_transform(glm::mat4 & transform);
 
   render_context();
 };
+
+void render_context::compute_transform(glm::mat4 & transform) {
+  // Operations:
+  //  1 scale to [0, 2] x [0, 2]
+  //  2 translate to [-1, -1] x [-1, -1]
+  //  3 rotate a bit
+  //  4 translate by the keypress drop
+  float keypress_drop;
+  if (_time_since_keypress < 1.f) {
+    keypress_drop = 1.f - _time_since_keypress * _time_since_keypress;
+  } else {
+    keypress_drop = 0.f;
+    _jounce = {0, 0};
+  }
+
+  // Get in to eye space
+  float x_scale = 2.f / _win_w;
+  float y_scale = -2.f / _win_h;
+  glm::mat4 trans_matrix = glm::mat4(1.f);
+  trans_matrix[0][3] = _jounce.x * keypress_drop;
+  trans_matrix[1][3] = _jounce.y * keypress_drop;
+  transform = glm::rotate(_rotation * keypress_drop, glm::vec3(0, 0, 1)) * trans_matrix;
+  transform = glm::mat4(x_scale, 0.f, 0.f, -1.f,
+                        0.f, y_scale, 0.f, 1.f,
+                        0.f, 0.f, 1.f, 0.f,
+                        0.f, 0.f, 0.f, 1.f) * transform;
+  // Rotate (3)
+  // Translate by the keypress drop (4)
+  keypress_drop *= font_size;
+  keypress_drop /= _win_h;
+  // transform = transform * ;
+}
 
 void render_context::do_render() {
   ///
   // Update step
   ///
+  // TODO: use a proper timer here;
   _parts.do_update(0.16f);
+  _time_since_keypress += 0.16f;
 
   ///
   // Actual render step
   ///
 
   // Transform matrix in row major order
-  float transform[16] = {
-    2.f / _win_w, 0.f, 0.f, -1.f,
-    0.f, -2.f / _win_h, 0.f, 1.f,
-    0.f, 0.f, 1.f, 0.f,
-    0.f, 0.f, 0.f, 1.f,
-  };
+  glm::mat4 transform;
+  compute_transform(transform);
 
   // Render particles
   _particle_fb->bind(GL_DRAW_FRAMEBUFFER);
@@ -1049,7 +1085,6 @@ void render_context::do_render() {
       kv.first->bind_texture(TEXTURE_BINDING);
       kv.second.render();
     }
-
   }
 
   // Blit particles
@@ -1098,6 +1133,24 @@ void render_context::set_y_nudge(int y) {
   printf("Y nudged %d\n", y);
 }
 
+void render_context::on_key_press(const TCursor & c, const char * const buf, int buflen) {
+  _time_since_keypress = 0.f;
+  glm::vec2 keypress_loc;
+  keypress_loc.x = c.x * font_size;
+  keypress_loc.y = c.y * font_size;
+  _rotation = rand() / (float)RAND_MAX;
+  // About 0.1% of pi
+  _rotation *= 0.00314;
+  if (keypress_loc.x < _win_w / 2.f) {
+    _rotation *= -1;
+  }
+  if (glm::dot(_jounce, _jounce) < 0.01) {
+    const float jounce_amount = 0.005f;
+    _jounce.x = jounce_amount * rand() / (float)RAND_MAX - (jounce_amount / 2);
+    _jounce.y = jounce_amount * -rand() / (float)RAND_MAX - (jounce_amount / 2);
+  }
+}
+
 render_context::render_context()
   : _shader(std::string(vert_shader), std::string(frag_shader)),
     _fb(new GlFrameBuffer(1, 1, false, GL_DEPTH_COMPONENT24)),
@@ -1105,6 +1158,9 @@ render_context::render_context()
     _win_w(1),
     _win_h(1),
     _parts(basic_update, 16.f),
+    _time_since_keypress(10000.f),
+    _rotation(0.f),
+    _jounce(0.f),
     _fb_blitter(std::make_shared<GlShader>(std::string(vert_shader), std::string(framebuffer_frag_shader))),
     _particle_blitter(std::make_shared<GlShader>(std::string(vert_shader), std::string(particle_blit_shader))),
     _rect_job(std::make_shared<GlShader>(std::string(vert_shader), std::string(color_shader)))
@@ -1182,4 +1238,8 @@ void render_rune(struct render_context * rc, const struct glyph_spec * spec) {
 
 void render_rect(struct render_context * rc, const struct color * const c, int x, int y, int w, int h) {
   rc->_rect_job.draw_rect(c, x, y, w, h);
+}
+
+void render_send_keypress(struct render_context * rc, const TCursor c, const char * const buf, const int buf_len) {
+  rc->on_key_press(c, buf, buf_len);
 }
